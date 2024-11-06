@@ -711,6 +711,58 @@ void Index::index_field_in_memory(const std::string& collection_name, const fiel
     // a) `afield` might not exist in the document (optional field)
     // b) `afield` value could be empty
 
+    // First handle vector fields (embeddings) specially since they require different treatment
+        if(afield.num_dim > 0) {
+        auto vec_index = vector_index[afield.name]->vecdex;
+        size_t curr_ele_count = vec_index->getCurrentElementCount();
+        if(curr_ele_count + iter_batch.size() > vec_index->getMaxElements()) {
+            vec_index->resizeIndex((curr_ele_count + iter_batch.size()) * 1.3);
+        }
+
+        for(auto& record : iter_batch) {  
+            if(!record.indexed.ok()) {
+                continue;
+            }
+
+            const auto& doc = record.is_update ? record.new_doc : record.doc;
+            if(!doc.contains(afield.name) || doc[afield.name].is_null()) {
+                continue;
+            }
+
+            try {
+                const std::vector<float>& float_vals = doc[afield.name].get<std::vector<float>>();
+                if(float_vals.size() != afield.num_dim) {
+                    record.index_failure(400, "Vector size mismatch.");
+                    continue;
+                }
+
+                // For updates, first remove existing vector if it exists
+                if(record.is_update) {
+                    try {
+                        // Try to get existing vector to see if we need to remove it
+                        vec_index->getDataByLabel<float>(record.seq_id);
+                        vec_index->markDelete(record.seq_id);
+                    } catch(...) {
+                        // No existing vector found, which is fine
+                    }
+                }
+
+                // Now add the new vector
+                if(afield.vec_dist == cosine) {
+                    std::vector<float> normalized_vals(afield.num_dim);
+                    hnsw_index_t::normalize_vector(float_vals, normalized_vals);
+                    vec_index->addPoint(normalized_vals.data(), record.seq_id, true);
+                } else {
+                    vec_index->addPoint(float_vals.data(), record.seq_id, true);
+                }
+            } catch(const std::exception &e) {
+                record.index_failure(400, e.what());
+                continue;
+            }
+        }
+        return;
+    }
+
     // non-geo faceted field should be indexed as faceted string field as well
     bool is_facet_field = (afield.facet && !afield.is_geopoint());
 
