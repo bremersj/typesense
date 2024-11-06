@@ -712,7 +712,7 @@ void Index::index_field_in_memory(const std::string& collection_name, const fiel
     // b) `afield` value could be empty
 
     // First handle vector fields (embeddings) specially since they require different treatment
-        if(afield.num_dim > 0) {
+    if(afield.num_dim > 0) {
         auto vec_index = vector_index[afield.name]->vecdex;
         size_t curr_ele_count = vec_index->getCurrentElementCount();
         if(curr_ele_count + iter_batch.size() > vec_index->getMaxElements()) {
